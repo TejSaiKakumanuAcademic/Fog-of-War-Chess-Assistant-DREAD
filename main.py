@@ -1,4 +1,4 @@
-from __future__ import annotations //this is a comment 
+from __future__ import annotations #this is a comment 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     import chess
