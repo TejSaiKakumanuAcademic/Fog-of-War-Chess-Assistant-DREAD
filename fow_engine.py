@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 
 import chess
 import chess.engine
-import platform
+import shutil
 from bias_eval import BiasScorer
 from tkinter import filedialog
 import os
@@ -30,34 +30,52 @@ class FowEngine:
         self.settings = settings
 
     def start_engine(self):
-        """Run the FOW engine to generate a move"""
-        system_name = platform.system()
-        SF_Path = Path("not_fairy_stockfish.exe")
-        if system_name == "Windows":
-            search_location = Path('.')
-            for search_path in search_location.iterdir():
-                if search_path.is_file():
-                    if search_path.name[:15] == "fairy-stockfish" and search_path.name[-4:] == ".exe":
-                        SF_Path = search_path
-            #SF_Path = "fairy-stockfish_x86-64-bmi2.exe"
-        elif system_name == "Darwin":  #MacOS
-            SF_Path = Path("our path to stockfish MACOS")
-        elif system_name == "Linux":
-            SF_Path = Path("our path to stockfish Linux")
-        try:   
-            self.engine = chess.engine.SimpleEngine.popen_uci([SF_Path, "load", "variants.ini"])
-        except:
-            print(f"Fairy stockfish engine at \"{SF_Path}\" failed to properly open")
-            cur_dir = os.path.dirname(os.path.abspath(__file__))
-            SF_Path = filedialog.askopenfilename(title= "Choose Fairy-Stockfish engine file", initialdir= cur_dir, filetypes= [("Executable", "*.exe")])
+        """Start Fairy-Stockfish, returning False if no engine can be opened."""
+        project_dir = Path(__file__).resolve().parent
+        windows = os.name == "nt"
+        engine_name = "fairy-stockfish.exe" if windows else "fairy-stockfish"
+        configured_path = os.environ.get("FAIRY_STOCKFISH_PATH")
+        candidates = [Path(configured_path).expanduser()] if configured_path else []
+        if windows:
+            candidates.extend(sorted(project_dir.glob("fairy-stockfish*.exe")))
+        candidates.append(project_dir / "bin" / engine_name)
+        installed_path = shutil.which(engine_name)
+        if installed_path:
+            candidates.append(Path(installed_path))
+
+        self.engine = None
+
+        def open_engine(path):
             try:
-                self.engine = chess.engine.SimpleEngine.popen_uci([SF_Path, "load", "variants.ini"])
-            except:
-                self.engine = None
-                print(f"Fairy stockfish engine at \"{SF_Path}\" failed to properly open")
-                self.logger.log("No suitable fairy stockfish engine was found.")
-                self.game_over.quit_game()
-                
+                # Fairy-Stockfish 14 splits its load arguments on spaces.
+                engine = chess.engine.SimpleEngine.popen_uci(
+                    [str(path.resolve()), "load", "variants.ini"], cwd=project_dir)
+            except (OSError, chess.engine.EngineError, TimeoutError) as error:
+                self.logger.log(f"Could not open Fairy-Stockfish at {path}: {error}")
+                return False
+            variant_option = engine.options.get("UCI_Variant")
+            if variant_option is None or "fow" not in (variant_option.var or []):
+                engine.close()
+                self.logger.log(f"Fairy-Stockfish at {path} did not load the fog-of-war variant.")
+                return False
+            self.engine = engine
+            return True
+
+        for path in candidates:
+            if path.is_file() and open_engine(path):
+                return True
+
+        selected_path = filedialog.askopenfilename(
+            parent=self.root,
+            title="Choose Fairy-Stockfish engine file",
+            initialdir=str(project_dir),
+            filetypes=[("Executable", "*.exe")] if windows else [("All files", "*")],
+        )
+        if selected_path and open_engine(Path(selected_path)):
+            return True
+        self.logger.log("No suitable Fairy-Stockfish engine was found.")
+        return False
+
         #self.engine.configure({"Threads": 12})# TODO look into this
         
     def close_engine(self):

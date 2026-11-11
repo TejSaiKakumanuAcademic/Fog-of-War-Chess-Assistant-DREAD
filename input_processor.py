@@ -4,6 +4,7 @@ if TYPE_CHECKING:
     from fow_logger import FowLogger
 
 import tkinter as tk
+from ui_compat import set_window_icon
 from gui_io import YesNoIO, MessageOutput
 
 class InputProcessor:
@@ -76,7 +77,7 @@ class PieceBiasInput(tk.Toplevel):
     def __init__(self, parent):
         super().__init__(parent)
         self.parent = parent
-        self.iconbitmap("images/icons/Bias.ico")
+        set_window_icon(self, "images/icons/Bias.ico")
         self.protocol("WM_DELETE_WINDOW", self.cancel)
         self.title("Bias Input")
         self.result = "", 0, 0
@@ -141,7 +142,7 @@ class BiasOutput(tk.Toplevel):
     def __init__(self, parent):
         super().__init__(parent)
         self.parent = parent
-        self.iconbitmap("images/icons/Bias.ico")
+        set_window_icon(self, "images/icons/Bias.ico")
         self.protocol("WM_DELETE_WINDOW", self.close)
         self.minsize(200, 150)
         self.title("User Biases")
@@ -170,7 +171,7 @@ class BiasOutput(tk.Toplevel):
 
 if __name__ == "__main__":
     root = tk.Tk()
-    root.iconbitmap("images/icons/Bias.ico")
+    set_window_icon(root, "images/icons/Bias.ico")
     processor = InputProcessor(root)
     result = processor.bias()
 

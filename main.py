@@ -4,6 +4,7 @@ if TYPE_CHECKING:
     import chess
 
 import tkinter as tk
+from ui_compat import set_window_icon, button_shadow
 import fow_chess
 from fow_engine import FowEngine
 from input_processor import InputProcessor
@@ -83,7 +84,7 @@ class ChessGUI:
         # print_button.pack(side=tk.LEFT)
 
         # Makes it so you can hit Escape to leave the game
-        self.root.bind("<Escape>", lambda event: self.game_over.force_quit_gamequit_game())
+        self.root.bind("<Escape>", lambda event: self.game_over.force_quit_game())
         self.root.bind("<Return>", lambda event : self.play_game.wait_lock.set(1)) # True
 
         # Makes it so that X-ing out of the application leaves the game
@@ -93,7 +94,9 @@ class ChessGUI:
         self.board_draw.draw_fog()
         
         # Start the chess engine
-        self.engine.start_engine()
+        if not self.engine.start_engine():
+            self.game_over.quit_game()
+            return
     
         # Create the prediction window via the prediction class and pass the root
         self.prediction_window = PredictionWindow(self.root, self.play_game.PSA, self.play_game.BSL, self.board, self.assisted_player) 
@@ -102,7 +105,7 @@ class ChessGUI:
             self.prediction_window.toggle()
             # Change the button color based on the visibility of the prediction window
             if self.prediction_window.isVisible:
-                self.toggle_predictions_button.config(relief="sunken", bg="SystemButtonShadow") # Shadow when toggled on
+                self.toggle_predictions_button.config(relief="sunken", bg=button_shadow(self.root)) # Shadow when toggled on
             else:
                 self.toggle_predictions_button.config(relief="raised", bg="SystemButtonFace") # Light when toggled off     
 
@@ -138,14 +141,16 @@ class MainMenu(tk.Toplevel):
     def __init__(self, parent):
         super().__init__(parent)
         self.parent = parent
-        self.iconbitmap("images/icons/FOW.ico")
+        set_window_icon(self, "images/icons/FOW.ico")
         self.protocol("WM_DELETE_WINDOW", self.quit)
         self.minsize(200, 150)
         self.title("Two-Player Fog Of War Chess Game")
         self.result = False
         
         # Makes this popup window behave like a dependent child of the parent
-        self.transient(parent)
+        # Aqua hides transient windows when their parent is withdrawn.
+        if self.tk.call("tk", "windowingsystem") != "aqua" or parent.winfo_viewable():
+            self.transient(parent)
         # Grabs the focus and puts it onto this child window
         self.grab_set()
 
@@ -178,7 +183,7 @@ class PlayerInput(tk.Toplevel):
     def __init__(self, parent):
         super().__init__(parent)
         self.parent = parent
-        self.iconbitmap("images/icons/FOW.ico")
+        set_window_icon(self, "images/icons/FOW.ico")
         self.protocol("WM_DELETE_WINDOW", self.ok)
         self.minsize(200, 100)
         self.title("Name Input")
@@ -229,7 +234,7 @@ class PlayerInput(tk.Toplevel):
 
 if __name__ == "__main__":
     root = tk.Tk()
-    root.iconbitmap("images/icons/FOW.ico")
+    set_window_icon(root, "images/icons/FOW.ico")
     root.withdraw()
     if not Path("settings.ini").exists():
         SettingsManager.create_default()

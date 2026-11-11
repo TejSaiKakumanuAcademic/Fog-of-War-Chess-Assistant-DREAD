@@ -1,4 +1,5 @@
-import tkinter as tk 
+import tkinter as tk
+from ui_compat import set_window_icon
 
 class MessageOutput(tk.Toplevel):
     """Display a popup telling the user a message"""
@@ -15,7 +16,7 @@ class MessageOutput(tk.Toplevel):
     ):
         super().__init__(parent)
         self.parent = parent
-        self.iconbitmap(icon_path)
+        set_window_icon(self, icon_path)
         self.protocol("WM_DELETE_WINDOW", self.close)
         self.minsize(min_size[0], min_size[1])
         self.title(title)
@@ -46,7 +47,7 @@ class YesNoIO(tk.Toplevel):
         super().__init__(parent)
         self.parent = parent
         if icon_path is not None:
-            self.iconbitmap(icon_path)
+            set_window_icon(self, icon_path)
         self.protocol("WM_DELETE_WINDOW", self.no)
         self.title(title)
         self.result = False

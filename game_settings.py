@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     import chess
 import tkinter as tk
+from ui_compat import set_window_icon
 import configparser
 import copy
 import os
@@ -150,7 +151,7 @@ class SettingsManager(tk.Toplevel):
     def __init__(self, parent):
         super().__init__(parent)
         self.parent = parent
-        self.iconbitmap("images/icons/Settings.ico")
+        set_window_icon(self, "images/icons/Settings.ico")
         self.protocol("WM_DELETE_WINDOW", self.cancel)
         self.minsize(200, 100)
         self.title("Settings")

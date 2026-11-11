@@ -10,6 +10,7 @@ if TYPE_CHECKING:
 
 import chess
 import tkinter as tk
+from ui_compat import set_window_icon, button_shadow
 from board_state_limiter import BoardStateLimiter
 from probable_state_analyzer import ProbableStateAnalyzer
 import copy
@@ -97,7 +98,7 @@ class PlayGame:
             self.transition_sides_button.config(relief= tk.RAISED, bg="SystemButtonFace")
             self.transition_sides.set(False)
         else:
-            self.transition_sides_button.config(relief= tk.SUNKEN, bg="SystemButtonShadow")
+            self.transition_sides_button.config(relief= tk.SUNKEN, bg=button_shadow(self.root))
             self.transition_sides.set(True)
 
     def update_turn_label(self):
@@ -221,7 +222,7 @@ class PromotionInput(tk.Toplevel):
     def __init__(self, parent, promotion_piece: tk.StringVar):
         super().__init__(parent)
         self.parent = parent
-        self.iconbitmap("images/icons/Promotion.ico")
+        set_window_icon(self, "images/icons/Promotion.ico")
         self.protocol("WM_DELETE_WINDOW", self.close)
         self.minsize(0, 150)
         self.title("Pawn Promotion")

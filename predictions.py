@@ -5,6 +5,7 @@ if TYPE_CHECKING:
     from board_state_limiter import BoardStateLimiter
 
 import tkinter as tk
+from ui_compat import set_window_icon, button_shadow
 import chess
 from board_draw import DrawBoard
 import fow_chess
@@ -16,7 +17,7 @@ class PredictionWindow(tk.Toplevel):
         super().__init__(parent)
         self.parent = parent
         self.title("Opponent Move Predictions")
-        self.iconbitmap("images/icons/FOW.ico")
+        set_window_icon(self, "images/icons/FOW.ico")
         
         # Store references to the PSA and BSL for accessing predictions and board states
         self.PSA = PSA
@@ -164,7 +165,7 @@ class PredictionWindow(tk.Toplevel):
         """Update the configurations of the prediction buttons based on the current prediction index."""
         for i in range(6):
             if i == self.active_prediction:
-                self.buttons[i].config(relief="sunken", bg="SystemButtonShadow")
+                self.buttons[i].config(relief="sunken", bg=button_shadow(self))
             else:
                 self.buttons[i].config(relief="raised", bg="SystemButtonFace")
 
@@ -184,7 +185,7 @@ class PredictionWindow(tk.Toplevel):
         for i in range(6, 12):
             piece_type = self.piece_names[i-6]
             if self.active_piece_vision == piece_type:
-                self.buttons[i].config(relief="sunken", bg="SystemButtonShadow")
+                self.buttons[i].config(relief="sunken", bg=button_shadow(self))
             else:
                 self.buttons[i].config(relief="raised", bg="SystemButtonFace")
 
