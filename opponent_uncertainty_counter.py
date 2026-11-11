@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from math import isfinite
 from time import monotonic
@@ -8,7 +8,7 @@ from typing import Literal
 
 import chess
 
-from board_state_limiter import BoardObservation, observe_board
+from board_state_limiter import BoardObservation, observe_board, position_key
 from fow_chess import FowBoard
 
 
@@ -30,6 +30,40 @@ class ModelUpdateResult:
     ply: int
     states_explored: int = 0
     reason: str | None = None
+
+
+@dataclass(frozen=True)
+class ScenarioMeasurement:
+    before: int
+    after: int
+
+
+@dataclass(frozen=True)
+class UncertaintyResult:
+    candidate_move: str
+    calculation_status: Literal["estimated", "incomplete", "invalid"]
+    processing_time_seconds: float = 0.0
+    states_explored: int = 0
+    scenario_measurements: tuple[ScenarioMeasurement, ...] = ()
+    reason: str | None = None
+
+    @property
+    def scenario_count(self) -> int:
+        return len(self.scenario_measurements)
+
+    @property
+    def min_states(self) -> int | None:
+        return min((pair.after for pair in self.scenario_measurements), default=None)
+
+    @property
+    def max_states(self) -> int | None:
+        return max((pair.after for pair in self.scenario_measurements), default=None)
+
+    @property
+    def average_states(self) -> float | None:
+        if self.scenario_measurements:
+            return sum(pair.after for pair in self.scenario_measurements) / self.scenario_count
+        return None
 
 
 @dataclass(frozen=True)
@@ -74,6 +108,9 @@ class _Successor:
 class _Scenario:
     worlds: tuple[FowBoard, ...]
     opponent_boards: tuple[FowBoard, ...]
+
+    def count_opponent_positions(self) -> int:
+        return len({position_key(board) for board in self.opponent_boards})
 
 
 class _SearchLimit(Exception):
@@ -171,7 +208,7 @@ class OpponentUncertaintyCounter:
             scenarios = tuple(
                 child
                 for parent in self._scenarios
-                for child in self._advance_scenario(parent, event.own_move, event.show_mover_view, budget, event)
+                for child in self._advance_scenario(parent, event.own_move, budget, event=event)
             )
             budget.check_time()
         except _SearchLimit as error:
@@ -183,6 +220,73 @@ class OpponentUncertaintyCounter:
         self._ply = event.ply
         self._game_over = event.outcome is not None
         return ModelUpdateResult("applied", self.ply, budget.states_explored)
+
+    def evaluate_candidate(
+        self,
+        move: chess.Move,
+        *,
+        ply: int,
+        max_positions: int | None = None,
+        timeout_seconds: float | None = None,
+    ) -> UncertaintyResult:
+        return self.evaluate_candidates(
+            (move,), ply=ply, max_positions=max_positions, timeout_seconds=timeout_seconds,
+        )[0]
+
+    def evaluate_candidates(
+        self,
+        moves: Iterable[chess.Move],
+        *,
+        ply: int,
+        max_positions: int | None = None,
+        timeout_seconds: float | None = None,
+    ) -> tuple[UncertaintyResult, ...]:
+        """Evaluate moves in input order from the same committed ply."""
+        candidates = tuple(moves)
+        reason = self._evaluation_error(ply)
+        if reason:
+            return tuple(UncertaintyResult(move.uci(), "invalid", reason=reason) for move in candidates)
+
+        baseline = self._scenarios
+        return tuple(
+            self._evaluate_candidate(move, baseline, self._search_budget(max_positions, timeout_seconds))
+            for move in candidates
+        )
+
+    def _evaluation_error(self, ply: int) -> str | None:
+        if ply != self.ply:
+            return "unexpected_ply"
+        if self._game_over:
+            return "game_over"
+        if not self._assisted_to_move():
+            return "opponent_to_move"
+        return None
+
+    def _evaluate_candidate(
+        self, move: chess.Move, baseline: tuple[_Scenario, ...], budget: _SearchBudget,
+    ) -> UncertaintyResult:
+        measurements: list[ScenarioMeasurement] = []
+        try:
+            for scenario in baseline:
+                children = tuple(self._advance_scenario(scenario, move, budget))
+                if not children:
+                    continue
+                before = scenario.count_opponent_positions()
+                measurements.extend(
+                    ScenarioMeasurement(before, child.count_opponent_positions()) for child in children
+                )
+            budget.check_time()
+        except _SearchLimit as error:
+            return UncertaintyResult(
+                move.uci(), "incomplete", monotonic() - budget.started_at,
+                budget.states_explored, reason=str(error),
+            )
+
+        return UncertaintyResult(
+            move.uci(), "estimated" if measurements else "invalid",
+            monotonic() - budget.started_at, budget.states_explored, tuple(measurements),
+            reason=None if measurements else "illegal_candidate",
+        )
 
     def _validate_event(self, event: AssistedTurnEvent) -> str | None:
         if self._game_over:
@@ -203,11 +307,12 @@ class OpponentUncertaintyCounter:
         self,
         scenario: _Scenario,
         assisted_move: chess.Move | None,
-        show_mover_view: bool,
         budget: _SearchBudget,
+        *,
         event: AssistedTurnEvent | None = None,
     ) -> Iterator[_Scenario]:
         opponent = not self._assisted_color
+        show_mover_view = event.show_mover_view if event else False
         world_moves = (assisted_move,) if assisted_move is not None else None
         observed_facts = _MoveFacts.from_observed(event.captured_piece, event.outcome) if event else None
         worlds_by_observation: dict[_OpponentObservation, list[FowBoard]] = {}

@@ -9,6 +9,8 @@ from fow_chess import FowBoard
 from opponent_uncertainty_counter import (
     AssistedTurnEvent,
     OpponentUncertaintyCounter,
+    ScenarioMeasurement,
+    _Scenario,
     _SearchBudget,
     _successors,
 )
@@ -154,3 +156,126 @@ class OpponentModelTests(unittest.TestCase):
         wrong_view = replace(event, observation=observe_board(board, chess.WHITE))
         self.assertEqual(counter.update_model(wrong_view).reason, "unexpected_observer")
         self.assertEqual(counter.ply, 0)
+
+
+class CandidateEvaluationTests(unittest.TestCase):
+    def opening_model(self) -> OpponentUncertaintyCounter:
+        board = FowBoard()
+        counter = OpponentUncertaintyCounter(chess.WHITE)
+        for uci in ("e2e4", "g8f6"):
+            self.assertEqual(counter.update_model(played_event(board, uci, chess.WHITE)).status, "applied")
+        return counter
+
+    def test_reference_opening_counts(self):
+        start = OpponentUncertaintyCounter(chess.WHITE)
+        result = start.evaluate_candidate(chess.Move.from_uci("e2e4"), ply=0)
+        self.assertEqual(result.calculation_status, "estimated")
+        self.assertEqual(result.scenario_measurements, (ScenarioMeasurement(1, 20),))
+
+        counter = self.opening_model()
+        moves = [chess.Move.from_uci(uci) for uci in ("g1f3", "e4e5")]
+        knight, pawn = counter.evaluate_candidates(moves, ply=2)
+        self.assertEqual((knight.candidate_move, pawn.candidate_move), ("g1f3", "e4e5"))
+        self.assertEqual(knight.calculation_status, "estimated")
+        self.assertEqual(pawn.calculation_status, "estimated")
+        self.assertEqual((knight.scenario_count, knight.min_states, knight.max_states), (13, 25, 246))
+        self.assertCountEqual(knight.scenario_measurements, (
+            ScenarioMeasurement(20, after)
+            for after in [25, 170, 176, 181, 187, 200, 202, 226] + [246] * 5
+        ))
+        self.assertCountEqual(pawn.scenario_measurements, (
+            [ScenarioMeasurement(20, 1)] * 3 + [ScenarioMeasurement(20, 2)] * 10
+        ))
+        self.assertAlmostEqual(pawn.average_states, 23 / 13)
+
+    def test_candidate_order_and_repetition_leave_baseline_unchanged(self):
+        counter = self.opening_model()
+        moves = [chess.Move.from_uci(uci) for uci in ("g1f3", "e4e5")]
+        baseline = counter._scenarios
+        boards = [board for scenario in baseline for board in (*scenario.worlds, *scenario.opponent_boards)]
+        positions = [(board.fen(en_passant="fen"), tuple(board.move_stack)) for board in boards]
+
+        first = counter.evaluate_candidates(moves, ply=2)
+        reverse = counter.evaluate_candidates(reversed(moves), ply=2)
+        repeated = counter.evaluate_candidate(moves[0], ply=2)
+
+        for left, right in zip(first, reversed(reverse)):
+            self.assertEqual(replace(left, processing_time_seconds=0), replace(right, processing_time_seconds=0))
+        self.assertEqual(replace(first[0], processing_time_seconds=0), replace(repeated, processing_time_seconds=0))
+        self.assertIs(counter._scenarios, baseline)
+        self.assertEqual(counter.ply, 2)
+        self.assertEqual([(board.fen(en_passant="fen"), tuple(board.move_stack)) for board in boards], positions)
+
+    def test_same_visible_events_give_same_results_for_different_hidden_replies(self):
+        move = chess.Move.from_uci("g1f3")
+        replies, positions, results = [], [], []
+        for uci in ("g8f6", "c7c5"):
+            board = FowBoard()
+            counter = OpponentUncertaintyCounter(chess.WHITE)
+            self.assertEqual(counter.update_model(played_event(board, "e2e4", chess.WHITE)).status, "applied")
+            reply = played_event(board, uci, chess.WHITE)
+            replies.append(reply)
+            positions.append(position_key(board))
+            self.assertEqual(counter.update_model(reply).status, "applied")
+            result = counter.evaluate_candidate(move, ply=2)
+            results.append(replace(result, processing_time_seconds=0))
+
+        self.assertNotEqual(*positions)
+        self.assertEqual(*replies)
+        self.assertEqual(*results)
+
+    def test_black_candidates_are_available_after_white_plays(self):
+        counter = OpponentUncertaintyCounter(chess.BLACK)
+        move = chess.Move.from_uci("g8f6")
+        self.assertEqual(counter.evaluate_candidate(move, ply=0).reason, "opponent_to_move")
+        opening = played_event(FowBoard(), "e2e4", chess.BLACK)
+        self.assertEqual(counter.update_model(opening).status, "applied")
+
+        result = counter.evaluate_candidate(move, ply=1)
+
+        self.assertEqual(result.calculation_status, "estimated")
+        self.assertEqual((result.scenario_count, result.min_states, result.max_states), (20, 13, 20))
+
+    def test_transpositions_count_once_per_scenario_and_survive_in_distinct_histories(self):
+        first, same_observations, different_opponent_moves = FowBoard(), FowBoard(), FowBoard()
+        for board, moves in [
+            (first, ["e2e3", "e7e6", "d2d3", "d7d6"]),
+            (same_observations, ["d2d3", "e7e6", "e2e3", "d7d6"]),
+            (different_opponent_moves, ["e2e3", "d7d6", "d2d3", "e7e6"]),
+        ]:
+            for uci in moves:
+                board.push_uci(uci)
+        counter = OpponentUncertaintyCounter(chess.WHITE)
+        counter._ply = 4
+        counter._scenarios = (
+            _Scenario((first,), (first, same_observations)),
+            _Scenario((different_opponent_moves,), (different_opponent_moves,)),
+        )
+
+        result = counter.evaluate_candidate(chess.Move.from_uci("g1f3"), ply=4)
+
+        self.assertEqual(result.scenario_count, 2)
+        self.assertEqual(result.scenario_measurements[0], result.scenario_measurements[1])
+        self.assertEqual(result.scenario_measurements[0].before, 1)
+
+    def test_limits_drop_partial_counts_and_stale_or_illegal_candidates_are_invalid(self):
+        counter = self.opening_model()
+        move = chess.Move.from_uci("g1f3")
+        capped = counter.evaluate_candidate(move, ply=2, max_positions=600)
+        with patch("opponent_uncertainty_counter.monotonic", side_effect=[0, 2, 2]):
+            expired = counter.evaluate_candidate(move, ply=2, timeout_seconds=1)
+        stale = counter.evaluate_candidate(move, ply=1)
+        illegal = counter.evaluate_candidate(chess.Move.from_uci("e2e4"), ply=2)
+
+        for result, status, reason in [
+            (capped, "incomplete", "position_limit"), (expired, "incomplete", "time_limit"),
+            (stale, "invalid", "unexpected_ply"), (illegal, "invalid", "illegal_candidate"),
+        ]:
+            with self.subTest(reason=reason):
+                self.assertEqual((result.calculation_status, result.reason), (status, reason))
+                self.assertEqual(result.scenario_measurements, ())
+                self.assertIsNone(result.min_states)
+                self.assertIsNone(result.max_states)
+                self.assertIsNone(result.average_states)
+        self.assertEqual(capped.states_explored, 600)
+        self.assertEqual(counter.evaluate_candidate(move, ply=2).calculation_status, "estimated")
