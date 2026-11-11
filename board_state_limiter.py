@@ -1,4 +1,5 @@
 from __future__ import annotations
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from fow_chess import FowBoard
@@ -6,6 +7,50 @@ if TYPE_CHECKING:
     
 import chess
 import copy
+
+
+@dataclass(frozen=True)
+class BoardObservation:
+    observer: chess.Color
+    visible: chess.Bitboard
+    visible_pieces: tuple[tuple[chess.Square, str], ...]
+    semi_visible: chess.Bitboard
+    semi_occupied: chess.Bitboard
+    en_passant_visible: chess.Bitboard
+
+
+def observe_board(board: FowBoard, observer: chess.Color) -> BoardObservation:
+    """Capture the information displayed in one player's fog view."""
+    if board.turn != observer:
+        # The transition view uses a null move, which clears en passant.
+        board = board.copy(stack=False)
+        board.turn = observer
+        board.ep_square = None
+
+    visible = board.get_fow_visibility()
+    en_passant_visible = board.get_ep_visibility()
+    semi_visible = board.get_semi_visibility(visible) & ~en_passant_visible
+    visible_pieces = tuple(
+        (square, board.piece_at(square).symbol())
+        for square in chess.scan_forward(visible & board.occupied)
+    )
+    return BoardObservation(
+        observer, visible, visible_pieces, semi_visible,
+        semi_visible & board.occupied, en_passant_visible,
+    )
+
+
+PositionKey = tuple[str, chess.Color, chess.Bitboard, chess.Square | None]
+
+
+def position_key(board: FowBoard) -> PositionKey:
+    """Identify a Fog of War position independently of its move history."""
+    return (
+        board.board_fen(),
+        board.turn,
+        board.clean_castling_rights(),
+        board.ep_square if board.has_pseudo_legal_en_passant() else None,
+    )
 
 
 class BoardStateLimiter:
