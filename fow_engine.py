@@ -86,7 +86,13 @@ class FowEngine:
         except chess.engine.EngineTerminatedError:
             print("Engine already terminated.")
 
-    def suggest_player_move(self, BSL: BoardStateLimiter, PSA: ProbableStateAnalyzer, max_guesses=5):
+    def suggest_player_move(
+            self,
+            BSL: BoardStateLimiter,
+            PSA: ProbableStateAnalyzer,
+            max_guesses = 5,
+            show_message = True
+    ) -> list[MoveScore]:
         """Analyze the current board state and suggest the best moves for the assisted player."""
         self.logger.log("Best moves from PSA boards")
     
@@ -122,6 +128,7 @@ class FowEngine:
                 below_scores[i] = score_round(a + b * (max_guesses + 1))
                 
         scored_guesses: list[MoveScore] = []
+        MoveScore = tuple[chess.Move, int]
         duplicates = [[False for move_guess in single_board_guesses] for single_board_guesses in board_guesses]
         # Remove duplicate moves from scored guesses
         for i in range(len(board_guesses)): # For each probable board's suggestions
@@ -145,12 +152,32 @@ class FowEngine:
                 scored_guesses.append((unique_move, score_round(total_score / len(board_guesses))))
                 duplicates[i][j] = True
         
+        
         # Sort and display the top moves
-        scored_guesses.sort(key=lambda x: x[1], reverse=True)
+        scored_guesses.sort(
+            key=lambda x: x[1],
+            reverse=True
+        )
+
+        # Only return the requested number of candidates
+        top_guesses = scored_guesses[:max_guesses]
+
         self.logger.log("Suggested Moves for White:")
-        for i, (move, score) in enumerate(scored_guesses[:max_guesses]):
-            self.logger.log(f"{i + 1}. Move: {move}, Score: {score}")
-        self.suggestion_message(scored_guesses, max_guesses)
+
+        for i, (move, score) in enumerate(top_guesses):
+            self.logger.log(
+                f"{i + 1}. Move: {move}, Score: {score}"
+            )
+
+        # Preserve normal OMINOUS behavior
+        if show_message:
+            self.suggestion_message(
+                top_guesses,
+                max_guesses
+            )
+
+        # Allow DREAD to access the recommendations
+        return top_guesses
             
     def board_state_analysis(self, board: FowBoard) -> int:
         """Analyze the board state and return Stockfish score."""

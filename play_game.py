@@ -15,6 +15,12 @@ from board_state_limiter import BoardStateLimiter
 from probable_state_analyzer import ProbableStateAnalyzer
 import copy
 from predictions import PredictionWindow
+from dread_analyzer import DreadAnalyzer
+from opponent_uncertainty_counter import (
+    OpponentUncertaintyCounter,
+    AssistedTurnEvent
+)
+from board_state_limiter import observe_board
 
 class PlayGame:
     def __init__(
@@ -52,6 +58,16 @@ class PlayGame:
         # Create instance of board state limiter and probable state analyzer
         self.BSL = BoardStateLimiter(self.board, [copy.deepcopy(self.board)])
         self.PSA = ProbableStateAnalyzer(self.BSL, self.engine, self.biases)
+
+        # Initialize DREAD's independent opponent knowledge model
+        self.uncertainty_counter = OpponentUncertaintyCounter(
+            assisted_color=self.assisted_player,
+            max_positions=25000
+        )
+
+        self.dread_analyzer = DreadAnalyzer(
+            self.uncertainty_counter
+        )
         
         # Initialized buttons
         self.suggest_move_button = tk.Button(self.root, text="Make Suggestion",command= lambda: self.engine.suggest_player_move(self.BSL, self.PSA, self.settings.suggested_moves_count))
@@ -154,11 +170,54 @@ class PlayGame:
                     captured_piece = self.board.piece_at(chess.square(chess.square_file(clicked_square), chess.square_rank(self.selected_square)))
                     print(f"{chess.COLOR_NAMES[captured_piece.color]} {chess.PIECE_NAMES[captured_piece.piece_type]} was captured!")
                     self.captured_pieces.append(chess.UNICODE_PIECE_SYMBOLS[captured_piece.symbol()])
+                
                 # Update the board with the move
+                moving_player = self.board.turn
                 self.board.push(move)
+
+                # Update DREAD's model using the
+                # assisted player's available information
+                if moving_player == self.assisted_player:
+
+                    dread_event = AssistedTurnEvent(
+                        ply=self.board.ply(),
+                        own_move=move,
+                        captured_piece=captured_piece,
+                        outcome=self.board.outcome()
+                    )
+
+                else:
+
+                    # The opponent's actual move is NOT
+                    # supplied to the DREAD model
+                    white_observation = observe_board(
+                        self.board,
+                        self.assisted_player
+                    )
+
+                    dread_event = AssistedTurnEvent(
+                        ply=self.board.ply(),
+                        observation=white_observation,
+                        captured_piece=captured_piece,
+                        outcome=self.board.outcome()
+                    )
+
+                update_result = self.uncertainty_counter.update_model(
+                    dread_event
+                )
+
+                self.logger.log(
+                    f"DREAD model update: "
+                    f"{update_result.status}, "
+                    f"ply={update_result.ply}, "
+                    f"states={update_result.states_explored}, "
+                    f"reason={update_result.reason}"
+                )
+
                 # Check for game-ending conditions
                 if self.game_over.check_game_over():
                     return
+
                 # Show board after move for player (do early in case BSL and PSA take some time to compute ??)
                 if self.transition_sides.get():
                     self.board.push(chess.Move.null())
